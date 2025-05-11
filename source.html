@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Crystal Growth</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        #canvas-container {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+        }
+        #controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 15px;
+            border-radius: 5px;
+            max-width: 300px;
+            transition: all 0.3s ease;
+            z-index: 100;
+        }
+        #controls.collapsed {
+            transform: translateX(-90%);
+        }
+        #toggle-controls {
+            position: absolute;
+            right: 10px;
+            top: 10px;
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        .control-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+        }
+        input[type="range"], select, button {
+            width: 100%;
+            margin-bottom: 10px;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 8px;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        .value-display {
+            font-size: 0.8em;
+            color: #ccc;
+            text-align: right;
+        }
+    </style>
+
+<base target="_self">
+
+
+    <div id="canvas-container"></div>
+    <div id="controls">
+        <button id="toggle-controls">≡</button>
+        <h2>Crystal Controls</h2>
+        
+        <div class="control-group">
+            <label for="growth-speed">Growth Speed</label>
+            <input type="range" id="growth-speed" min="0.1" max="2" step="0.1" value="1">
+            <div class="value-display" id="speed-value">1.0</div>
+        </div>
+        
+        <div class="control-group">
+            <label for="branch-count">Branch Count</label>
+            <input type="range" id="branch-count" min="1" max="10" step="1" value="5">
+            <div class="value-display" id="branch-value">5</div>
+        </div>
+        
+        <div class="control-group">
+            <label for="crystal-color">Crystal Color</label>
+            <select id="crystal-color">
+                <option value="0x4aa8ff">Blue</option>
+                <option value="0x4aff6a">Green</option>
+                <option value="0xff4a4a">Red</option>
+                <option value="0xfff14a">Yellow</option>
+                <option value="0xffffff">White</option>
+            </select>
+        </div>
+        
+        <div class="control-group">
+            <label for="style-preset">Style Preset</label>
+            <select id="style-preset">
+                <option value="natural">Natural Quartz</option>
+                <option value="scifi">Sci-Fi</option>
+                <option value="mathematical">Mathematical</option>
+            </select>
+        </div>
+        
+        <button id="randomize">Randomize</button>
+        <button id="reset">Reset</button>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+    <script>
+        // Main variables
+        let scene, camera, renderer;
+        let crystals = [];
+        let mouseX = 0, mouseY = 0;
+        let growthTimer = 0;
+        let maxCrystals = 200; // Safety limit
+        
+        // Parameters
+        let params = {
+            growthSpeed: 1,
+            branchCount: 5,
+            crystalColor: 0x4aa8ff,
+            style: 'natural',
+            maxSize: 2,
+            minSize: 0.5
+        };
+        
+        // Initialize Three.js scene
+        function init() {
+            // Create scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x000022);
+            
+            // Create camera
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 15;
+            
+            // Create renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+            
+            // Add lights
+            const ambientLight = new THREE.AmbientLight(0x404040);
+            scene.add(ambientLight);
+            
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+            directionalLight.position.set(1, 1, 1);
+            scene.add(directionalLight);
+            
+            // Add initial crystal
+            addCrystal(0, 0, 0);
+            
+            // Event listeners
+            window.addEventListener('resize', onWindowResize);
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('click', onClick);
+            
+            // UI controls
+            setupControls();
+            
+            // Start animation loop
+            animate();
+        }
+        
+        // Create a crystal
+        function addCrystal(x, y, z, parent = null) {
+            if (crystals.length >= maxCrystals) return null;
+            
+            const size = parent ? 
+                Math.max(params.minSize, parent.size * 0.7) : 
+                params.maxSize;
+            
+            const geometry = new THREE.OctahedronGeometry(size, 0);
+            const material = new THREE.MeshPhongMaterial({
+                color: params.crystalColor,
+                emissive: 0x111111,
+                specular: 0x111111,
+                shininess: 30,
+                transparent: true,
+                opacity: 0.9
+            });
+            
+            const crystal = new THREE.Mesh(geometry, material);
+            crystal.position.set(x, y, z);
+            crystal.size = size;
+            crystal.parentCrystal = parent;
+            crystal.growthDirection = parent ? 
+                new THREE.Vector3(
+                    Math.random() - 0.5,
+                    Math.random() - 0.5,
+                    Math.random() - 0.5
+                ).normalize() : 
+                new THREE.Vector3(0, 1, 0);
+            
+            scene.add(crystal);
+            crystals.push(crystal);
+            return crystal;
+        }
+        
+        // Grow crystals
+        function growCrystals(delta) {
+            growthTimer += delta * params.growthSpeed;
+            
+            if (growthTimer > 1) {
+                growthTimer = 0;
+                
+                // Limit growth based on performance
+                if (crystals.length < maxCrystals) {
+                    const newCrystals = [];
+                    
+                    crystals.forEach(crystal => {
+                        if (Math.random() < 0.3 && (!crystal.parentCrystal || crystals.length < maxCrystals * 0.5)) {
+                            const direction = crystal.growthDirection.clone();
+                            direction.add(new THREE.Vector3(
+                                (Math.random() - 0.5) * 0.3,
+                                (Math.random() - 0.5) * 0.3,
+                                (Math.random() - 0.5) * 0.3
+                            )).normalize();
+                            
+                            const distance = crystal.size * 1.5;
+                            const newPos = new THREE.Vector3(
+                                crystal.position.x + direction.x * distance,
+                                crystal.position.y + direction.y * distance,
+                                crystal.position.z + direction.z * distance
+                            );
+                            
+                            const newCrystal = addCrystal(newPos.x, newPos.y, newPos.z, crystal);
+                            if (newCrystal) newCrystals.push(newCrystal);
+                            
+                            // Add branches
+                            for (let i = 0; i < params.branchCount - 1; i++) {
+                                if (Math.random() < 0.2 && crystals.length < maxCrystals) {
+                                    const branchDirection = direction.clone();
+                                    branchDirection.applyAxisAngle(
+                                        new THREE.Vector3(Math.random(), Math.random(), Math.random()).normalize(),
+                                        Math.PI * (0.2 + Math.random() * 0.6)
+                                    );
+                                    
+                                    const branchPos = new THREE.Vector3(
+                                        crystal.position.x + branchDirection.x * distance * 0.7,
+                                        crystal.position.y + branchDirection.y * distance * 0.7,
+                                        crystal.position.z + branchDirection.z * distance * 0.7
+                                    );
+                                    
+                                    const branch = addCrystal(branchPos.x, branchPos.y, branchPos.z, crystal);
+                                    if (branch) newCrystals.push(branch);
+                                }
+                            }
+                        }
+                    });
+                    
+                    // Apply style presets
+                    applyStylePreset();
+                }
+            }
+            
+            // Make crystals react to mouse
+            crystals.forEach(crystal => {
+                const distanceToMouse = Math.sqrt(
+                    Math.pow(crystal.position.x - mouseX * 10, 2) +
+                    Math.pow(crystal.position.y - mouseY * 10, 2)
+                );
+                
+                if (distanceToMouse < 10) {
+                    const repelForce = 0.1 * (10 - distanceToMouse);
+                    crystal.position.x += (crystal.position.x - mouseX * 10) * repelForce * 0.01;
+                    crystal.position.y += (crystal.position.y - mouseY * 10) * repelForce * 0.01;
+                }
+            });
+        }
+        
+        // Apply style presets
+        function applyStylePreset() {
+            crystals.forEach(crystal => {
+                const material = crystal.material;
+                
+                switch(params.style) {
+                    case 'natural':
+                        material.opacity = 0.9;
+                        material.shininess = 30;
+                        material.wireframe = false;
+                        break;
+                    case 'scifi':
+                        material.opacity = 0.7;
+                        material.shininess = 100;
+                        material.wireframe = true;
+                        break;
+                    case 'mathematical':
+                        material.opacity = 0.8;
+                        material.shininess = 10;
+                        material.wireframe = false;
+                        break;
+                }
+            });
+        }
+        
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            const delta = 0.016; // Approximate 60fps delta
+            
+            growCrystals(delta);
+            
+            // Rotate crystals slightly
+            crystals.forEach(crystal => {
+                crystal.rotation.x += 0.001 * params.growthSpeed;
+                crystal.rotation.y += 0.001 * params.growthSpeed;
+            });
+            
+            // Rotate camera around scene
+            camera.position.x = 15 * Math.sin(Date.now() * 0.0002);
+            camera.position.z = 15 * Math.cos(Date.now() * 0.0002);
+            camera.lookAt(0, 0, 0);
+            
+            renderer.render(scene, camera);
+        }
+        
+        // Event handlers
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+        
+        function onMouseMove(event) {
+            mouseX = (event.clientX / window.innerWidth) * 2 - 1;
+            mouseY = -(event.clientY / window.innerHeight) * 2 + 1;
+        }
+        
+        function onClick() {
+            if (crystals.length < maxCrystals) {
+                addCrystal(
+                    mouseX * 10,
+                    mouseY * 10,
+                    (Math.random() - 0.5) * 5
+                );
+            }
+        }
+        
+        // UI controls
+        function setupControls() {
+            // Toggle controls panel
+            document.getElementById('toggle-controls').addEventListener('click', () => {
+                document.getElementById('controls').classList.toggle('collapsed');
+            });
+            
+            // Growth speed
+            const speedSlider = document.getElementById('growth-speed');
+            const speedValue = document.getElementById('speed-value');
+            speedSlider.addEventListener('input', () => {
+                params.growthSpeed = parseFloat(speedSlider.value);
+                speedValue.textContent = params.growthSpeed.toFixed(1);
+            });
+            
+            // Branch count
+            const branchSlider = document.getElementById('branch-count');
+            const branchValue = document.getElementById('branch-value');
+            branchSlider.addEventListener('input', () => {
+                params.branchCount = parseInt(branchSlider.value);
+                branchValue.textContent = params.branchCount;
+            });
+            
+            // Crystal color
+            document.getElementById('crystal-color').addEventListener('change', (e) => {
+                params.crystalColor = parseInt(e.target.value, 16);
+                crystals.forEach(crystal => {
+                    crystal.material.color.setHex(params.crystalColor);
+                });
+            });
+            
+            // Style preset
+            document.getElementById('style-preset').addEventListener('change', (e) => {
+                params.style = e.target.value;
+                applyStylePreset();
+            });
+            
+            // Randomize button
+            document.getElementById('randomize').addEventListener('click', () => {
+                params.growthSpeed = 0.5 + Math.random() * 1.5;
+                params.branchCount = 2 + Math.floor(Math.random() * 8);
+                
+                const colors = ['0x4aa8ff', '0x4aff6a', '0xff4a4a', '0xfff14a', '0xffffff'];
+                params.crystalColor = parseInt(colors[Math.floor(Math.random() * colors.length)], 16);
+                
+                const styles = ['natural', 'scifi', 'mathematical'];
+                params.style = styles[Math.floor(Math.random() * styles.length)];
+                
+                // Update UI to match
+                speedSlider.value = params.growthSpeed;
+                speedValue.textContent = params.growthSpeed.toFixed(1);
+                branchSlider.value = params.branchCount;
+                branchValue.textContent = params.branchCount;
+                document.getElementById('crystal-color').value = params.crystalColor.toString(16);
+                document.getElementById('style-preset').value = params.style;
+                
+                // Apply changes
+                crystals.forEach(crystal => {
+                    crystal.material.color.setHex(params.crystalColor);
+                });
+                applyStylePreset();
+            });
+            
+            // Reset button
+            document.getElementById('reset').addEventListener('click', () => {
+                // Clear existing crystals
+                crystals.forEach(crystal => {
+                    scene.remove(crystal);
+                    if (crystal.geometry) crystal.geometry.dispose();
+                    if (crystal.material) crystal.material.dispose();
+                });
+                crystals = [];
+                
+                // Reset parameters
+                params = {
+                    growthSpeed: 1,
+                    branchCount: 5,
+                    crystalColor: 0x4aa8ff,
+                    style: 'natural',
+                    maxSize: 2,
+                    minSize: 0.5
+                };
+                
+                // Update UI
+                speedSlider.value = params.growthSpeed;
+                speedValue.textContent = params.growthSpeed.toFixed(1);
+                branchSlider.value = params.branchCount;
+                branchValue.textContent = params.branchCount;
+                document.getElementById('crystal-color').value = '0x4aa8ff';
+                document.getElementById('style-preset').value = 'natural';
+                
+                // Add initial crystal
+                addCrystal(0, 0, 0);
+            });
+        }
+        
+        // Start the application
+        init();
+    </script>
+
+              
+          
+                
+          
+              
